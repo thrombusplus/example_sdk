@@ -325,3 +325,286 @@ Below is an example of how your output directory structure might look:
 - If you are using mDNS, ensure that the target network supports multicast traffic for device discovery.
 - When deploying to a Windows environment, confirm that Bonjour or a similar mDNS resolver is installed to support mDNS functionality.
 - For more advanced deployment options, consider using tools like WiX or Inno Setup to create an installer that simplifies installation for end users.
+
+
+# ESP32 LAM Device Firmware (example)
+
+```c
+#include <WiFi.h>
+#include <WiFiUdp.h>
+#include <Wire.h>
+#include <ESPmDNS.h>  // For mDNS support
+#include "MPU6050.h"
+
+// ----------------------------------------------------------------------------
+// Wi-Fi Credentials
+// ----------------------------------------------------------------------------
+const char* ssid     = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
+
+// ----------------------------------------------------------------------------
+// UDP
+// ----------------------------------------------------------------------------
+WiFiUDP udp;
+IPAddress remoteIP;           // Stores the IP of the PC sending commands
+unsigned int remotePort = 0;  // Stores the port of the PC
+
+const unsigned int LISTEN_PORT = 5000;        // Port to listen for commands
+const unsigned long HEARTBEAT_TIMEOUT = 10000; // 10 seconds timeout for heartbeat
+
+// ----------------------------------------------------------------------------
+// IMU
+// ----------------------------------------------------------------------------
+MPU6050 imu;
+static const int I2C_SDA = 14;
+static const int I2C_SCL = 15;
+
+// mDNS
+const char* mDNS_hostname = "thrombus-lam"; // maybe -left or -right depending on the leg?
+const char* mDNS_service = "_imu"; // **needs to start with _   // in case a device exposes more than 1 services under different or same port (e.g imu data, ppg data, )
+
+// Streaming & config
+bool streaming = false;   
+int samplingRate = 30;   
+bool enableAccel[3] = { true, true, true };
+bool enableGyro[3]  = { true, true, true };
+bool enableMag[3]   = { false, false, false }; 
+
+// Timestamps & connection
+unsigned long lastSampleTime    = 0;           // For sampling rate
+unsigned long lastHeartbeatTime = 0;           // Last time a heartbeat was received
+bool connected       = false;       // Connection state
+
+// ----------------------------------------------------------------------------
+// Function Prototypes
+// ----------------------------------------------------------------------------
+void setupMDNS();
+void processCommand(const String& cmd);
+void sendIMUData();
+void sendStatus();
+void handleHeartbeat();
+void resumeAdvertising();
+
+// ----------------------------------------------------------------------------
+// Setup
+// ----------------------------------------------------------------------------
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  // 1. Connect to Wi-Fi
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to Wi-Fi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWi-Fi connected. IP address: " + WiFi.localIP().toString());
+
+  // 2. Initialize mDNS
+  setupMDNS();
+
+  // 3. Start UDP listener
+  udp.begin(LISTEN_PORT);
+  Serial.println("UDP listening on port " + String(LISTEN_PORT));
+
+  // 4. Initialize IMU
+  Wire.begin(I2C_SDA, I2C_SCL);
+  imu.initialize();
+  if (!imu.testConnection()) {
+    Serial.println("MPU6050 connection failed!");
+  } else {
+    Serial.println("MPU6050 connected!");
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Main Loop
+// ----------------------------------------------------------------------------
+void loop() {
+  // 1. Check for incoming UDP packets
+  int packetSize = udp.parsePacket();
+  if (packetSize) {
+    remoteIP   = udp.remoteIP();
+    remotePort = udp.remotePort();
+
+    char packetBuffer[128];
+    int len = udp.read(packetBuffer, sizeof(packetBuffer) - 1);
+    packetBuffer[len] = 0;
+    String cmd = String(packetBuffer);
+
+    Serial.println("Received Command: " + cmd);
+
+    if (cmd == "ping") {
+      // Handle heartbeat
+      handleHeartbeat();
+    } else {
+      // Process other commands
+      processCommand(cmd);
+    }
+  }
+
+  // 2. If streaming, send IMU data at the specified rate
+  unsigned long currentTime = millis();
+  unsigned long interval    = 1000UL / samplingRate;
+  if (streaming && (currentTime - lastSampleTime >= interval)) {
+    lastSampleTime = currentTime;
+    sendIMUData();
+  }
+
+  // 3. Check heartbeat timeout
+  if (connected && (millis() - lastHeartbeatTime > HEARTBEAT_TIMEOUT)) {
+    Serial.println("Heartbeat timeout. Disconnected.");
+    connected = false;
+    resumeAdvertising();
+  }
+
+}
+
+// ----------------------------------------------------------------------------
+// mDNS Setup
+// ----------------------------------------------------------------------------
+void setupMDNS() {
+  if (!MDNS.begin(mDNS_hostname)) {
+    Serial.println("Error setting up mDNS responder!");
+  } else {
+    Serial.println("mDNS responder started. Hostname: " + String(mDNS_hostname) + ".local");
+    // Advertise a service so the C# app can discover via Zeroconf if needed
+    MDNS.addService(mDNS_service, "_udp", LISTEN_PORT);
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Resume Advertising
+// ----------------------------------------------------------------------------
+void resumeAdvertising() {
+  Serial.println("Resuming mDNS advertising...");
+  MDNS.addService(mDNS_service, "_udp", LISTEN_PORT);
+}
+
+// ----------------------------------------------------------------------------
+// Handle Heartbeat
+// ----------------------------------------------------------------------------
+void handleHeartbeat() {
+  lastHeartbeatTime = millis();
+  if (!connected) {
+    Serial.println("Connected to C# app via heartbeat.");
+    connected = true;
+    // Stop advertising to reduce network traffic
+    mdns_service_remove(mDNS_service, "_udp");
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Command Processor
+// ----------------------------------------------------------------------------
+void processCommand(const String& cmd) {
+  if (cmd == "initialize") {
+    Serial.println("Initialized IMU module");
+
+  } else if (cmd.startsWith("setSamplingRate:")) {
+    String rateStr = cmd.substring(strlen("setSamplingRate:"));
+    samplingRate   = rateStr.toInt();
+    Serial.println("Set sampling rate to " + String(samplingRate) + " Hz");
+
+  } else if (cmd == "startStreaming") {
+    streaming = true;
+    Serial.println("IMU streaming started");
+
+  } else if (cmd == "stopStreaming") {
+    streaming = false;
+    Serial.println("IMU streaming stopped");
+
+  } else if (cmd == "getStatus") {
+    sendStatus();
+
+  } else {
+    Serial.println("Unknown command: " + cmd);
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Send IMU Data (10 floats: 9 sensor + 1 timestamp)
+// ----------------------------------------------------------------------------
+void sendIMUData() {
+  int16_t ax, ay, az, gx, gy, gz;
+  imu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+
+  // Convert raw to floats
+  float accelX = float(ax) / 16384.0f;
+  float accelY = float(ay) / 16384.0f;
+  float accelZ = float(az) / 16384.0f;
+  float gyroX  = float(gx) / 131.0f;
+  float gyroY  = float(gy) / 131.0f;
+  float gyroZ  = float(gz) / 131.0f;
+
+  // Magnetometer placeholders
+  float magX = 0.0f;
+  float magY = 0.0f;
+  float magZ = 0.0f;
+
+  // Timestamp in ms (converted to float)
+  float timestampMs = (float)millis();
+
+  // Build the binary payload: 10 floats => 40 bytes
+  // [0..8] = sensor data, [9] = timestamp
+  float data[10];
+  data[0] = enableAccel[0] ? accelX : 0.0f;
+  data[1] = enableAccel[1] ? accelY : 0.0f;
+  data[2] = enableAccel[2] ? accelZ : 0.0f;
+  data[3] = enableGyro[0]  ? gyroX  : 0.0f;
+  data[4] = enableGyro[1]  ? gyroY  : 0.0f;
+  data[5] = enableGyro[2]  ? gyroZ  : 0.0f;
+  data[6] = enableMag[0]   ? magX   : 0.0f;
+  data[7] = enableMag[1]   ? magY   : 0.0f;
+  data[8] = enableMag[2]   ? magZ   : 0.0f;
+  data[9] = timestampMs; 
+
+  // Send over UDP
+  udp.beginPacket(remoteIP, remotePort);
+  udp.write((uint8_t*)data, sizeof(data));
+  udp.endPacket();
+}
+
+// ----------------------------------------------------------------------------
+// Send Status (as JSON)
+// ----------------------------------------------------------------------------
+void sendStatus() {
+  // Time since last heartbeat
+  unsigned long timeSinceHeartbeat = millis() - lastHeartbeatTime;
+
+  // Build a JSON string containing config/state
+  // Example structure:
+  // {
+  //   "ip": "192.168.1.50",
+  //   "port": 5000,
+  //   "streaming": true,
+  //   "samplingRate": 100,
+  //   "lastConnection": 1234,  // ms since last heartbeat
+  //   "connected": true
+  // }
+
+  String ipStr = WiFi.localIP().toString();
+  String remoteIPStr = connected ? remoteIP.toString() : "";
+  
+  String statusMsg = "{";
+  statusMsg += "\"ip\":\"" + ipStr + "\",";
+  statusMsg += "\"remoteIP\":\"" + remoteIPStr + "\",";
+  statusMsg += "\"port\":" + String(remotePort) + ",";
+  statusMsg += "\"streaming\":" + String((streaming ? "true" : "false")) + ",";
+  statusMsg += "\"samplingRate\":" + String(samplingRate) + ",";
+  statusMsg += "\"lastConnection\":" + String(timeSinceHeartbeat) + ",";
+  statusMsg += "\"connected\":" + String((connected ? "true" : "false"));
+  statusMsg += "}";
+
+  // Send over UDP
+  udp.beginPacket(remoteIP, remotePort);
+  udp.print(statusMsg);
+  udp.endPacket();
+
+  Serial.println("Sent status: " + statusMsg);
+}
+
+
+
+```
