@@ -22,14 +22,14 @@ class Program
         var lam = new LAM();
 
         // Subscribe to events
-        lam.OnLAMDataReceived += (data) =>
+        lam.OnDataReceived += (data) =>
         {
             Console.WriteLine($"[IMU] A=({data.AccelX:F2},{data.AccelY:F2},{data.AccelZ:F2}), " +
                               $"G=({data.GyroX:F2},{data.GyroY:F2},{data.GyroZ:F2}), " +
                               $"Timestamp={data.TimeStamp}");
         };
 
-        lam.OnLAMStatusUpdated += (json) =>
+        lam.OnStatusUpdated += (json) =>
         {
             Console.WriteLine("[Status JSON] " + json);
             // If lam.Status != null, we can read structured fields

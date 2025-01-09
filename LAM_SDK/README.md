@@ -96,14 +96,14 @@ lam.Initialize(devices[0].IPAddress, devices[0].Port);
 ### 3. Subscribe to Events
 
 ```csharp
-lam.OnLAMDataReceived += (imuFrame) => {
+lam.OnDataReceived += (imuFrame) => {
     Console.WriteLine("IMU => " +
         $"A=({imuFrame.AccelX:F2}, {imuFrame.AccelY:F2}, {imuFrame.AccelZ:F2}), " +
         $"G=({imuFrame.GyroX:F2}, {imuFrame.GyroY:F2}, {imuFrame.GyroZ:F2}), " +
         $"Timestamp={imuFrame.TimeStamp}");
 };
 
-lam.OnLAMStatusUpdated += (json) => {
+lam.OnStatusUpdated += (json) => {
     Console.WriteLine($"Status Update: {json}");
     if (lam.Status != null) {
         Console.WriteLine($"Connected: {lam.Status.Connected}, Streaming: {lam.Status.Streaming}");
@@ -210,10 +210,10 @@ namespace LAM_SDK_Example {
             var lam = new LAM();
 
             // 3. Subscribe to events
-            lam.OnLAMDataReceived += (data) => {
+            lam.OnDataReceived += (data) => {
                 Console.WriteLine($"[IMU] Acc=({data.AccelX:F2}, {data.AccelY:F2}, {data.AccelZ:F2}), Ts={data.TimeStamp}");
             };
-            lam.OnLAMStatusUpdated += (json) => {
+            lam.OnStatusUpdated += (json) => {
                 Console.WriteLine($"[Status] {json}");
                 if (lam.Status != null) {
                     Console.WriteLine($"Streaming={lam.Status.Streaming}, Connected={lam.Status.Connected}");
@@ -258,7 +258,7 @@ namespace LAM_SDK_Example {
 - Typically not; the SDK’s Timer sends "ping" automatically. However, you can call `SendHeartbeat()` yourself if needed.
 
 ### JSON Parsing Fails
-- If the device’s status message changes or includes new fields, adjust the `LAMStatus` model. Or just rely on `OnLAMStatusUpdated` (raw JSON) for custom parsing.
+- If the device’s status message changes or includes new fields, adjust the `LAMStatus` model. Or just rely on `OnStatusUpdated` (raw JSON) for custom parsing.
 
 
 

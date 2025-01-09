@@ -41,12 +41,12 @@ namespace LAM_SDK
         /// <summary>
         /// Event triggered when a new status JSON is received.
         /// </summary>
-        public event Action<string> OnLAMStatusUpdated;
+        public event Action<string> OnStatusUpdated;
 
         /// <summary>
         /// Event triggered when a full IMU frame (10 floats) is parsed.
         /// </summary>
-        public event Action<LAMData> OnLAMDataReceived;
+        public event Action<LAMData> OnDataReceived;
 
         // Heartbeat interval in milliseconds (2 seconds)
         private const int HEARTBEAT_INTERVAL_MS = 2000;
@@ -152,7 +152,7 @@ namespace LAM_SDK
             // If last status update was > 4s ago, mark as disconnected
             if (_lastStatusUpdate>0 && DateTimeOffset.UtcNow.ToUnixTimeSeconds() - _lastStatusUpdate > 4)
             {
-                OnLAMStatusUpdated?.Invoke("Disconnected");
+                OnStatusUpdated?.Invoke("Disconnected");
                 StopListening();
             }
         }
@@ -173,7 +173,7 @@ namespace LAM_SDK
         public void StopListening()
         {
             _isListening = false;
-            _udpClient.StopListening();
+            _udpClient?.StopListening();
 
             // Stop the heartbeat timer
             _heartbeatTimer?.Dispose();
@@ -222,7 +222,7 @@ namespace LAM_SDK
             {
                 // Parse IMU data
                 var imu = ParseLAMData(data);
-                OnLAMDataReceived?.Invoke(imu);
+                OnDataReceived?.Invoke(imu);
             }
             else
             {
@@ -249,7 +249,7 @@ namespace LAM_SDK
                     // If parsing fails, keep the raw JSON in StatusJson
                 }
 
-                OnLAMStatusUpdated?.Invoke(msg);
+                OnStatusUpdated?.Invoke(msg);
             }
         }
 
@@ -279,7 +279,7 @@ namespace LAM_SDK
         public void Dispose()
         {
             StopListening();
-            _udpClient.Dispose();
+            _udpClient?.Dispose();
         }
     }
 }

@@ -15,5 +15,9 @@
         public float MagZ { get; set; }
 
         public float TimeStamp { get; set; }
+        public override string ToString()
+        {
+            return $"{TimeStamp},{AccelX:F2},{AccelY:F2},{AccelZ:F2},{GyroX:F2},{GyroY:F2},{GyroZ:F2},{MagX:F2},{MagY:F2},{MagZ:F2}";
+        }
     }
 }

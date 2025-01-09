@@ -19,11 +19,11 @@ namespace LAM_Examples
             lamInstance = new LAM();
 
             // 2. Subscribe to events
-            lamInstance.OnLAMDataReceived += (data) =>
+            lamInstance.OnDataReceived += (data) =>
             {
-                Debug.WriteLine(
-                    $"IMU => A=({data.AccelX:F2}, {data.AccelY:F2}, {data.AccelZ:F2}), " +
-                    $"G=({data.GyroX:F2}, {data.GyroY:F2}, {data.GyroZ:F2})");
+                //Debug.WriteLine(
+                //    $"IMU => A=({data.AccelX:F2}, {data.AccelY:F2}, {data.AccelZ:F2}), " +
+                //    $"G=({data.GyroX:F2}, {data.GyroY:F2}, {data.GyroZ:F2})");
 
                 // Accelerometer values: data.AccelX, data.AccelY, data.AccelZ
                 // Convert to pitch/roll in degrees. 
@@ -44,7 +44,7 @@ namespace LAM_Examples
                 pictureBox1.Invalidate();
             };
 
-            lamInstance.OnLAMStatusUpdated += (status) =>
+            lamInstance.OnStatusUpdated += (status) =>
             {
                 Debug.WriteLine($"[Status/Info] {status}");
                 // update the textbox_status
