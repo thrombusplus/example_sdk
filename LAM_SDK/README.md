@@ -32,14 +32,121 @@ By integrating the LAM SDK into a C# application, you can:
 - Receive real-time IMU data.
 - Monitor device status in JSON form.
 
-## Requirements
+## Class Diagram
+```mermaid
+
+classDiagram
+    %% Classes in the SDK
+    class LAM {
+        - bool _isListening
+        - Timer _heartbeatTimer
+        - UdpClientWrapper _udpClient
+        - LAMStatus Status
+        - string StatusJson
+        + Initialize(remoteIp, remotePort, localPort)
+        + StartListening()
+        + StopListening()
+        + Dispose()
+        + OnLAMDataReceived: event
+        + OnLAMStatusUpdated: event
+        + (various Command Methods)
+    }
+
+    class UdpClientWrapper {
+        - UdpClient _udpClient
+        - IPEndPoint _remoteEndPoint
+        + Initialize(remoteIp, remotePort, localPort)
+        + StartListeningAsync()
+        + StopListening()
+        + Send(byte[] data)
+        + event Action<byte[]> DataReceived
+    }
+
+    class LAMData {
+        + float AccelX
+        + float AccelY
+        + float AccelZ
+        + float GyroX
+        + float GyroY
+        + float GyroZ
+        + float MagX
+        + float MagY
+        + float MagZ
+        + float TimeStamp
+    }
+
+    class LAMStatus {
+        + string Ip
+        + string RemoteIP
+        + int Port
+        + bool Streaming
+        + int SamplingRate
+        + long LastConnection
+        + bool Connected
+    }
+
+    class LAMDiscoveredDevice {
+        + string Hostname
+        + string IPAddress
+        + int Port
+    }
+
+    %% External dependency for mDNS
+    class Zeroconf {
+        <<external>>
+        + ResolveAsync(...)
+    }
+
+    %% Relationships
+    LAM --> UdpClientWrapper : "uses for UDP"
+    LAM --> LAMData : "emits IMU data"
+    LAM --> LAMStatus : "stores parsed JSON"
+    LAM --> LAMDiscoveredDevice : "static discovery method returns list"
+    LAM --|> Zeroconf : "calls ResolveAsync() for mDNS"
+
+    %% Additional notes
+    note for LAM "Coordinates UDP, heartbeat,\nJSON parsing, event handling"
+    note for UdpClientWrapper "Low-level UDP logic"
+
+
+```
+
+## Class Diagram Details
+### LAM
+
+ - Orchestrates the SDK’s functionality, including initializing UDP, listening, sending commands, heartbeats, and events.
+ - Publishes OnLAMDataReceived (for IMU frames) and OnLAMStatusUpdated (for JSON status).
+
+### UdpClientWrapper
+
+ - Encapsulates low-level UDP operations (initializing sockets, sending/receiving packets).
+ - Raises DataReceived whenever a packet arrives, which LAM subscribes to.
+
+### LAMData
+
+ - Represents a single IMU frame (40 bytes → 10 floats: Accel, Gyro, Mag placeholders, and Timestamp).
+
+### LAMStatus
+
+ - Holds the parsed JSON fields from the device’s status messages.
+### LAMDiscoveredDevice
+
+ - Simple model class returned by DiscoverDevicesAsync. Contains a device’s hostname/IP/port.
+
+### Zeroconf
+
+ - External library for mDNS.
+ - Used by LAM.DiscoverDevicesAsync to scan the network for _imu._udp.local. services.
+ 
+
+## SDK Requirements
 
 - .NET 6 (or higher) is recommended.
 - Zeroconf NuGet Package for mDNS discovery.
 - System.Text.Json (or Newtonsoft.Json) for JSON parsing.
 - A UDP-capable network environment where the LAM device and your PC are on the same local network.
 
-## Installation
+## SDK Installation
 
 ### Obtain the SDK Files
 
@@ -61,6 +168,68 @@ PM> Install-Package Zeroconf
 
 If you wish to parse the device status as a strongly typed C# object, ensure you have references to `System.Text.Json` (built into .NET Core/6+).
 
+## Flow Overview (App<->SDK<->Device)
+```mermaid
+sequenceDiagram
+    participant App
+    participant LAM
+    participant UdpClientWrapper
+    participant Firmware
+
+    %% 0. Discovery
+    App->>LAM: DiscoverDevicesAsync()
+    # LAM->>Zeroconf: ResolveAsync()
+    # Zeroconf->>LAM: List of LAMDiscoveredDevice
+    LAM->>App: List of devices IP/port
+
+    %% 1. Initialization
+    App->>LAM: Initialize(remoteIp, remotePort)
+    note over LAM: Creates/Configures LAM object
+    LAM->>UdpClientWrapper: .Initialize(remoteIp, remotePort, localPort)
+    LAM->>LAM: StartListening()
+
+    %% 2. Start listening
+    LAM->>UdpClientWrapper: StartListeningAsync()
+    UdpClientWrapper->>UdpClientWrapper: Bind UDP socket, begin receive loop
+
+    %% 3. Immediate Heartbeat & Status
+    note over LAM: Right after Initialize()
+    LAM->>LAM: HeartbeatCallback (Timer triggered)
+    LAM->>Firmware: SendCommand("ping") 
+    LAM->>Firmware: SendCommand("getStatus")
+
+    %% 4. Firmware replies
+    Firmware->>UdpClientWrapper: JSON status packet
+    UdpClientWrapper->>LAM: DataReceived(byte[])
+    LAM->>LAM: Parse JSON -> OnStatusUpdated
+
+    %% 5. Streaming IMU Data
+    App->>LAM: StartStreaming()
+    LAM->>Firmware: SendCommand("startStreaming")
+
+    Firmware->>UdpClientWrapper: 40-byte IMU frames
+    UdpClientWrapper->>LAM: DataReceived(byte[])
+    LAM->>LAM: Parse 40 bytes -> OnDataReceived
+
+    %% 6. Periodic Heartbeats
+    note over LAM: Every 2s (Timer)
+    LAM->>Firmware: "ping"
+    LAM->>Firmware: "getStatus"
+    Firmware->>UdpClientWrapper: JSON status
+    UdpClientWrapper->>LAM: DataReceived(byte[])
+
+    %% 7. Stop
+    App->>LAM: StopStreaming()
+    LAM->>Firmware: SendCommand("stopStreaming")
+
+    %% 8. Cleanup
+    App->>LAM: Dispose()
+    LAM->>UdpClientWrapper: StopListening()
+    note over LAM,Firmware: Heartbeat timer disposed, UDP closed
+
+
+```
+
 ## Getting Started
 
 ### 1. Discover Devices (mDNS)
@@ -68,7 +237,7 @@ If you wish to parse the device status as a strongly typed C# object, ensure you
 Use `LAM.DiscoverDevicesAsync("_imu._udp.local.")` to find devices advertising the `_imu._udp` service on your network:
 
 ```csharp
-var devices = await LAM.DiscoverDevicesAsync("_imu._udp.local.");
+var devices = await LAM.DiscoverDevicesAsync(); // "_imu._udp.local." is the default for this SDK
 if (devices.Count == 0) {
     Console.WriteLine("No devices found via mDNS.");
     return;
