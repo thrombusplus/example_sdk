@@ -36,7 +36,8 @@ namespace LAM_SDK.Core
         public async void StartListeningAsync()
         {
             if (_udpClient == null)
-                throw new InvalidOperationException("UDP client not initialized. Call Initialize() first.");
+                return;
+                //throw new InvalidOperationException("UDP client not initialized. Call Initialize() first.");
 
             _isListening = true;
 
